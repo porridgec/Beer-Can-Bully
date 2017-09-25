@@ -71,6 +71,7 @@ class GameViewController: UIViewController {
     hudNode.rotation = SCNVector4.init(x: 1, y: 0, z: 0, w: .pi)
     
     helper.state = .tapToPlay
+    helper.menuLabelNode.text = "Highscore: \(helper.highScore)"
     
     let transition = SKTransition.crossFade(withDuration: 1)
     scnView.present(menuScene,
@@ -80,6 +81,7 @@ class GameViewController: UIViewController {
   }
   
   func presentLevel() {
+    resetLevel()
     setupNextLevel()
     levelScene.physicsWorld.gravity = SCNVector3.init(x: 0, y: -1, z: 0)
     helper.state = .playing
@@ -88,6 +90,25 @@ class GameViewController: UIViewController {
                     with: transition,
                     incomingPointOfView: nil,
                     completionHandler: nil)
+  }
+  
+  func resetLevel() {
+    // 1
+    currentBallNode?.removeFromParentNode()
+    
+    // 2
+    bashedCanNames.removeAll()
+    
+    // 3
+    for canNode in helper.canNodes {
+      canNode.removeFromParentNode()
+    }
+    helper.canNodes.removeAll()
+    
+    // 4
+    for ballNode in helper.ballNodes {
+      ballNode.removeFromParentNode()
+    }
   }
   
   func createScene() {
@@ -105,6 +126,7 @@ class GameViewController: UIViewController {
     touchCatchingPlaneNode.position = SCNVector3.init(x: 0, y: 0, z: shelfNode.position.z)
     touchCatchingPlaneNode.eulerAngles = cameraNode.eulerAngles
     levelScene.physicsWorld.contactDelegate = self
+    levelScene.rootNode.addChildNode(helper.hudNode)
   }
   
   func setupNextLevel() {
@@ -259,7 +281,25 @@ class GameViewController: UIViewController {
     startTouch = nil
     endTouch = nil
     
-    dispenseNewBall()
+    if helper.ballNodes.count == GameHelper.maxBallNodes {
+      let waitAction = SCNAction.wait(duration: 3)
+      let blockAction = SCNAction.run { _ in
+        self.resetLevel()
+        self.helper.ballNodes.removeAll()
+        self.helper.currentLevel = 0
+        self.helper.score = 0
+        self.presentMenu()
+      }
+      let sequenceAction = SCNAction.sequence([waitAction, blockAction])
+      levelScene.rootNode.runAction(sequenceAction, forKey: GameHelper.gameEndActionKey)
+    } else {
+      let waitAction = SCNAction.wait(duration: 0.5)
+      let blockAction = SCNAction.run { _ in
+        self.dispenseNewBall()
+      }
+      let sequenceAction = SCNAction.sequence([waitAction, blockAction])
+      levelScene.rootNode.runAction(sequenceAction)
+    }
   }
   
   // MARK: - Touches
@@ -302,5 +342,94 @@ class GameViewController: UIViewController {
 }
 
 extension GameViewController: SCNPhysicsContactDelegate {
-  
+  func physicsWorld(_ world: SCNPhysicsWorld, didBegin contact: SCNPhysicsContact) {
+    guard let nodeNameA = contact.nodeA.name else { return }
+    guard let nodeNameB = contact.nodeB.name else { return }
+    
+    var ballFloorContactNode: SCNNode?
+    if nodeNameA == "ball" && nodeNameB == "floor" {
+      ballFloorContactNode = contact.nodeA
+    } else if nodeNameB == "ball" && nodeNameA == "floor" {
+      ballFloorContactNode = contact.nodeB
+    }
+    
+    if let ballNode = ballFloorContactNode {
+      guard ballNode.action(forKey: GameHelper.ballFloorCollisionAudioKey) == nil else { return }
+      
+      ballNode.runAction(SCNAction.playAudio(helper.ballFloorAudioSource, waitForCompletion: true),
+                         forKey: GameHelper.ballFloorCollisionAudioKey)
+      return
+    }
+    
+    var ballCanContactNode: SCNNode?
+    if nodeNameA.contains("Can") && nodeNameB == "ball" {
+      ballCanContactNode = contact.nodeA
+    } else if nodeNameB.contains("Can") && nodeNameA == "ball" {
+      ballCanContactNode = contact.nodeB
+    }
+    
+    if let canNode = ballCanContactNode {
+      guard canNode.action(forKey: GameHelper.ballCanCollisionAudioKey) == nil else {
+        return
+      }
+      
+      canNode.runAction(
+        SCNAction.playAudio(
+          helper.ballCanAudioSource,
+          waitForCompletion: true
+        ),
+        forKey: GameHelper.ballCanCollisionAudioKey
+      )
+      return
+    }
+    
+    // 4
+    if bashedCanNames.contains(nodeNameA) || bashedCanNames.contains(nodeNameB) { return }
+    
+    // 5
+    var canNodeWithContact: SCNNode?
+    if nodeNameA.contains("Can") && nodeNameB == "floor" {
+      canNodeWithContact = contact.nodeA
+    } else if nodeNameB.contains("Can") && nodeNameA == "floor" {
+      canNodeWithContact = contact.nodeB
+    }
+    
+    // 6
+    if let bashedCan = canNodeWithContact {
+      bashedCan.runAction(
+        SCNAction.playAudio(
+          helper.canFloorAudioSource,
+          waitForCompletion: false
+        )
+      )
+      bashedCanNames.append(bashedCan.name!)
+      helper.score += 1
+    }
+    
+    if bashedCanNames.count == helper.canNodes.count {
+      // 2
+      if levelScene.rootNode.action(forKey: GameHelper.gameEndActionKey) != nil {
+        levelScene.rootNode.removeAction(forKey: GameHelper.gameEndActionKey)
+      }
+      
+      let maxLevelIndex = helper.levels.count - 1
+      
+      // 3
+      if helper.currentLevel == maxLevelIndex {
+        helper.currentLevel = 0
+      } else {
+        helper.currentLevel += 1
+      }
+      
+      // 4
+      let waitAction = SCNAction.wait(duration: 1.0)
+      let blockAction = SCNAction.run { _ in
+        self.resetLevel()
+        self.setupNextLevel()
+      }
+      let sequenceAction = SCNAction.sequence([waitAction, blockAction])
+      levelScene.rootNode.runAction(sequenceAction)
+    }
+    
+  }
 }
