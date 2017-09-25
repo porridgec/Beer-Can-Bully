@@ -35,6 +35,13 @@ class GameViewController: UIViewController {
   var baseCanNode: SCNNode!
   var currentBallNode: SCNNode?
   
+  var startTouchTime: TimeInterval!
+  var endTouchTime: TimeInterval!
+  var startTouch: UITouch?
+  var endTouch: UITouch?
+  
+  var bashedCanNames: [String] = []
+  
   lazy var touchCatchingPlaneNode: SCNNode = {
     let node = SCNNode.init(geometry: SCNPlane.init(width: 40, height: 40))
     node.opacity = 0.001
@@ -97,6 +104,7 @@ class GameViewController: UIViewController {
     levelScene.rootNode.addChildNode(touchCatchingPlaneNode)
     touchCatchingPlaneNode.position = SCNVector3.init(x: 0, y: 0, z: shelfNode.position.z)
     touchCatchingPlaneNode.eulerAngles = cameraNode.eulerAngles
+    levelScene.physicsWorld.contactDelegate = self
   }
   
   func setupNextLevel() {
@@ -224,17 +232,62 @@ class GameViewController: UIViewController {
     levelScene.rootNode.addChildNode(ballNode)
   }
   
+  func throwBall() {
+    guard let ballNode = currentBallNode else { return }
+    guard let endingTouch = endTouch else { return }
+    
+    let firstTouchResult = scnView.hitTest(endingTouch.location(in: view), options: nil).filter{ $0.node == touchCatchingPlaneNode }.first
+    
+    guard let touchResult = firstTouchResult else { return }
+    levelScene.rootNode.runAction(SCNAction.playAudio(helper.whooshAudioSource, waitForCompletion: false))
+    
+    let timeDifference = endTouchTime - startTouchTime
+    let velocityComponent = Float(min(max(1 - timeDifference, 0.1), 0.1))
+    
+    let impulseVector = SCNVector3.init(x: touchResult.localCoordinates.x,
+                                        y: touchResult.localCoordinates.y * velocityComponent * 15,
+                                        z: shelfNode.position.z * velocityComponent * 60)
+//    print(touchResult.localCoordinates)
+//    print(velocityComponent)
+//    print(impulseVector)
+    ballNode.physicsBody?.applyForce(impulseVector, asImpulse: true)
+    helper.ballNodes.append(ballNode)
+    
+    currentBallNode = nil
+    startTouchTime = nil
+    endTouchTime = nil
+    startTouch = nil
+    endTouch = nil
+    
+    dispenseNewBall()
+  }
+  
   // MARK: - Touches
   override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
     super.touchesBegan(touches, with: event)
     if helper.state == .tapToPlay {
       presentLevel()
+    } else {
+      guard let firstTouch = touches.first else { return }
+      
+      let point = firstTouch.location(in: scnView)
+      let hitResults = scnView.hitTest(point, options: [:])
+      
+      if hitResults.first?.node == currentBallNode {
+        startTouch = touches.first
+        startTouchTime = Date().timeIntervalSince1970
+      }
     }
   }
   
   override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
     super.touchesEnded(touches, with: event)
     
+    guard startTouch != nil else { return }
+    
+    endTouch = touches.first
+    endTouchTime = Date().timeIntervalSince1970
+    throwBall()
   }
   
   // MARK: - ViewController Overrides
@@ -245,5 +298,9 @@ class GameViewController: UIViewController {
   override var supportedInterfaceOrientations : UIInterfaceOrientationMask {
     return UIDevice.current.userInterfaceIdiom == .phone ? .portrait : .all
   }
+  
+}
+
+extension GameViewController: SCNPhysicsContactDelegate {
   
 }
